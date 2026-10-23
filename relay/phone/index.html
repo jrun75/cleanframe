@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#14110e">
+<title>Add to CleanFrame</title>
+<style>
+/* Layout: one column that fills the phone, the TV frame as the hero, one action at the bottom. */
+@font-face { font-family: Manrope; src: url(/manrope.woff2) format('woff2'); font-weight: 200 800; font-display: swap; }
+:root {
+  --ground: #14110e;
+  --raise: #201b17;
+  --ink: #f6f1e7;
+  --mute: rgba(246, 241, 231, .66);
+  --faint: rgba(246, 241, 231, .16);
+  --solid: #f6f1e7;
+  --solid-ink: #1d1a16;
+  --warn: #ffb27a;
+  --font: Manrope, -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; margin: 0; }
+html, body { height: 100%; background: var(--ground); color: var(--ink); font-family: var(--font); -webkit-font-smoothing: antialiased; }
+body { display: flex; flex-direction: column; min-height: 100%; padding: max(20px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left)); -webkit-tap-highlight-color: transparent; }
+header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding-block: 8px 28px; }
+.brand { font-size: 15px; font-weight: 600; letter-spacing: .02em; }
+.code { font-size: 13px; color: var(--mute); font-variant-numeric: tabular-nums; letter-spacing: .12em; }
+h1 { font-size: 34px; line-height: 1.1; font-weight: 500; letter-spacing: -.02em; text-wrap: balance; }
+.lede { margin-top: 12px; font-size: 17px; line-height: 1.45; color: var(--mute); max-width: 32ch; }
+main { flex: 1; display: flex; flex-direction: column; gap: 24px; }
+.frame { position: relative; width: 100%; aspect-ratio: 16 / 9; border-radius: 14px; overflow: hidden; background: var(--raise); box-shadow: 0 0 0 1px var(--faint); touch-action: none; }
+.frame img { position: absolute; left: 0; top: 0; transform-origin: 0 0; user-select: none; -webkit-user-drag: none; pointer-events: none; }
+.frame .empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--mute); font-size: 15px; }
+.frame .grid { position: absolute; inset: 0; pointer-events: none; opacity: 0; transition: opacity .2s; background:
+  linear-gradient(to right, transparent calc(33.33% - .5px), rgba(255,255,255,.35) calc(33.33% - .5px), rgba(255,255,255,.35) calc(33.33% + .5px), transparent calc(33.33% + .5px), transparent calc(66.66% - .5px), rgba(255,255,255,.35) calc(66.66% - .5px), rgba(255,255,255,.35) calc(66.66% + .5px), transparent calc(66.66% + .5px)),
+  linear-gradient(to bottom, transparent calc(33.33% - .5px), rgba(255,255,255,.35) calc(33.33% - .5px), rgba(255,255,255,.35) calc(33.33% + .5px), transparent calc(33.33% + .5px), transparent calc(66.66% - .5px), rgba(255,255,255,.35) calc(66.66% - .5px), rgba(255,255,255,.35) calc(66.66% + .5px), transparent calc(66.66% + .5px)); }
+.frame.is-moving .grid { opacity: 1; }
+.hint { font-size: 14px; color: var(--mute); text-align: center; }
+label.field { display: flex; flex-direction: column; gap: 8px; font-size: 14px; color: var(--mute); }
+input[type=text] { width: 100%; font: 500 18px/1.3 var(--font); color: var(--ink); background: var(--raise); border: 0; border-radius: 12px; padding: 14px 16px; box-shadow: 0 0 0 1px var(--faint); }
+input[type=text]:focus { outline: 2px solid var(--ink); outline-offset: 0; }
+.actions { display: flex; flex-direction: column; gap: 10px; padding-top: 8px; }
+button, .button { display: flex; align-items: center; justify-content: center; min-height: 56px; width: 100%; border: 0; border-radius: 16px; font: 600 17px/1 var(--font); cursor: pointer; }
+.primary { background: var(--solid); color: var(--solid-ink); }
+.secondary { background: transparent; color: var(--ink); box-shadow: inset 0 0 0 1px var(--faint); }
+button:disabled { opacity: .45; }
+button:focus-visible, .button:focus-within { outline: 2px solid var(--ink); outline-offset: 3px; }
+.picker input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.status { display: flex; flex-direction: column; gap: 14px; padding-block: 8px; }
+.bar { height: 4px; border-radius: 2px; background: var(--faint); overflow: hidden; }
+.bar i { display: block; height: 100%; width: 0; background: var(--ink); transition: width .3s ease; }
+.status p { font-size: 16px; color: var(--mute); }
+.error { color: var(--warn); font-size: 16px; line-height: 1.45; }
+.done-mark { width: 56px; height: 56px; border-radius: 50%; display: grid; place-items: center; background: var(--solid); color: var(--solid-ink); }
+.done-mark svg { width: 28px; height: 28px; }
+[hidden] { display: none !important; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<header><span class="brand">CleanFrame</span><span class="code" id="code"></span></header>
+
+<main id="start">
+  <div>
+    <h1>Add a photo to your Frame</h1>
+    <p class="lede">Pick a photo, frame it for the TV, and it joins your wallpapers.</p>
+  </div>
+  <div class="frame"><div class="empty">Your photo will appear here</div></div>
+  <div class="actions" style="margin-top:auto">
+    <label class="button primary picker">Choose a photo<input type="file" id="file" accept="image/*"></label>
+  </div>
+</main>
+
+<main id="crop" hidden>
+  <div>
+    <h1>Frame it</h1>
+    <p class="lede">Drag to move. Pinch to zoom. The box is exactly what the TV shows.</p>
+  </div>
+  <div class="frame" id="frame"><img id="img" alt="Your photo"><div class="grid"></div></div>
+  <label class="field">Name<input type="text" id="name" maxlength="40" autocomplete="off"></label>
+  <div class="actions" style="margin-top:auto">
+    <button class="primary" id="send">Send to TV</button>
+    <label class="button secondary picker">Choose another<input type="file" id="file2" accept="image/*"></label>
+  </div>
+</main>
+
+<main id="work" hidden>
+  <div>
+    <h1 id="workTitle">Preparing your photo</h1>
+    <p class="lede">Keep this page open for a moment.</p>
+  </div>
+  <div class="status"><div class="bar"><i id="bar"></i></div><p id="workNote">Framing your photo</p></div>
+</main>
+
+<main id="done" hidden>
+  <div class="done-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg></div>
+  <div>
+    <h1>It’s on your TV</h1>
+    <p class="lede">Press OK on the remote to make it your wallpaper. To add another, choose Upload a photo on the TV again.</p>
+  </div>
+</main>
+
+<main id="fail" hidden>
+  <div>
+    <h1>That didn’t work</h1>
+    <p class="error" id="failNote"></p>
+  </div>
+  <div class="actions" style="margin-top:auto"><button class="secondary" id="retry">Try again</button></div>
+</main>
+
+<script src="/prep.js"></script>
+<script>
+(function () {
+  'use strict';
+  var code = location.pathname.split('/').pop().toUpperCase();
+  var $ = function (id) { return document.getElementById(id); };
+  var views = ['start', 'crop', 'work', 'done', 'fail'], source = null, view = { z: 1, ox: 0, oy: 0 }, lastFile = null;
+  $('code').textContent = code.slice(0, 3) + ' ' + code.slice(3);
+
+  function show(id) { views.forEach(function (v) { $(v).hidden = v !== id; }); window.scrollTo(0, 0); }
+  function fail(message) { $('failNote').textContent = message; show('fail'); }
+  function api(method, url, data, onProgress) {
+    return new Promise(function (done, reject) {
+      var x = new XMLHttpRequest();
+      x.open(method, url); x.setRequestHeader('Content-Type', 'application/json');
+      if (onProgress && x.upload) x.upload.onprogress = function (e) { if (e.lengthComputable) onProgress(e.loaded / e.total); };
+      x.onload = function () { var r = {}; try { r = JSON.parse(x.responseText); } catch (e) {} if (x.status < 300) done(r); else reject(new Error(r.error || 'The Mac didn’t accept the upload.')); };
+      x.onerror = function () { reject(new Error('Can’t reach your Mac. Make sure this phone is on your home Wi‑Fi.')); };
+      x.send(data ? JSON.stringify(data) : null);
+    });
+  }
+
+  api('GET', '/api/sessions/' + code).then(function (s) {
+    if (s.state === 'expired') fail('This code expired. Choose Upload a photo on the TV again.');
+    else if (s.state === 'ready') fail('This code was already used. Choose Upload a photo on the TV again.');
+    else api('POST', '/api/sessions/' + code + '/state', { state: 'connected' }).catch(function () {});
+  }, function (e) { fail(e.message); });
+
+  /* ---------- Choosing and framing ---------- */
+  function choose(input) {
+    var f = input.files && input.files[0];
+    input.value = '';
+    if (!f) return;
+    lastFile = f;
+    var url = URL.createObjectURL(f), img = new Image();
+    img.onload = function () {
+      source = img;
+      $('img').src = url;
+      $('name').value = f.name && !/^(IMG|DSC|PXL|image)[_\-.\d ]/i.test(f.name) && !/^\d/.test(f.name) ? f.name.replace(/\.[^.]+$/, '').slice(0, 40) : 'Photo, ' + new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+      show('crop');
+      view = { z: 1, ox: 0, oy: 0 };
+      requestAnimationFrame(function () { fit(); centre(); place(); });
+    };
+    img.onerror = function () { fail('This photo couldn’t be opened. Try a different one.'); };
+    img.src = url;
+  }
+  $('file').addEventListener('change', function () { choose(this); });
+  $('file2').addEventListener('change', function () { choose(this); });
+
+  var frame = $('frame'), fw = 0, fh = 0, s0 = 1;
+  function fit() { fw = frame.clientWidth; fh = frame.clientHeight; s0 = Math.max(fw / source.naturalWidth, fh / source.naturalHeight); }
+  function scale() { return s0 * view.z; }
+  function clampView() {
+    var s = scale(), iw = source.naturalWidth * s, ih = source.naturalHeight * s;
+    view.ox = Math.min(0, Math.max(fw - iw, view.ox));
+    view.oy = Math.min(0, Math.max(fh - ih, view.oy));
+  }
+  function centre() { var s = scale(); view.ox = (fw - source.naturalWidth * s) / 2; view.oy = (fh - source.naturalHeight * s) / 2; }
+  function place() { clampView(); $('img').style.transform = 'translate(' + view.ox + 'px,' + view.oy + 'px) scale(' + scale() + ')'; }
+  function crop() { var s = scale(); return { x: -view.ox / s, y: -view.oy / s, w: fw / s, h: fh / s }; }
+  window.addEventListener('resize', function () { if (!source || $('crop').hidden) return; var c = crop(); fit(); view.z = Math.max(1, (fw / c.w) / s0); view.ox = -c.x * scale(); view.oy = -c.y * scale(); place(); });
+
+  var pts = {}, gesture = null;
+  function list() { return Object.keys(pts).map(function (k) { return pts[k]; }); }
+  function begin() {
+    var p = list(), r = frame.getBoundingClientRect();
+    if (p.length === 1) gesture = { x: p[0].x, y: p[0].y, ox: view.ox, oy: view.oy };
+    else if (p.length >= 2) {
+      var mx = (p[0].x + p[1].x) / 2 - r.left, my = (p[0].y + p[1].y) / 2 - r.top;
+      gesture = { d: Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y), z: view.z, mx: mx, my: my, ox: view.ox, oy: view.oy };
+    }
+  }
+  frame.addEventListener('pointerdown', function (e) { if (!source) return; frame.setPointerCapture(e.pointerId); pts[e.pointerId] = { x: e.clientX, y: e.clientY }; frame.classList.add('is-moving'); begin(); });
+  frame.addEventListener('pointermove', function (e) {
+    if (!pts[e.pointerId] || !gesture) return;
+    pts[e.pointerId] = { x: e.clientX, y: e.clientY };
+    var p = list(), r = frame.getBoundingClientRect();
+    if (p.length === 1 && gesture.d === undefined) { view.ox = gesture.ox + p[0].x - gesture.x; view.oy = gesture.oy + p[0].y - gesture.y; }
+    else if (p.length >= 2 && gesture.d) {
+      var d = Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y), old = s0 * gesture.z;
+      view.z = Math.max(1, Math.min(5, gesture.z * d / gesture.d));
+      var k = scale() / old, mx = (p[0].x + p[1].x) / 2 - r.left, my = (p[0].y + p[1].y) / 2 - r.top;
+      view.ox = mx - (gesture.mx - gesture.ox) * k; view.oy = my - (gesture.my - gesture.oy) * k;
+    }
+    place();
+  });
+  function end(e) { delete pts[e.pointerId]; if (!list().length) { gesture = null; frame.classList.remove('is-moving'); } else begin(); }
+  frame.addEventListener('pointerup', end); frame.addEventListener('pointercancel', end);
+  frame.addEventListener('wheel', function (e) {
+    if (!source) return; e.preventDefault();
+    var r = frame.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top, old = scale();
+    view.z = Math.max(1, Math.min(5, view.z * Math.exp(-e.deltaY / 400)));
+    var k = scale() / old; view.ox = mx - (mx - view.ox) * k; view.oy = my - (my - view.oy) * k; place();
+  }, { passive: false });
+
+  /* ---------- Preparing and sending ---------- */
+  function dataURL(blob) {
+    return new Promise(function (done, reject) { var r = new FileReader(); r.onload = function () { done(r.result); }; r.onerror = reject; r.readAsDataURL(blob); });
+  }
+  function progress(note, amount) { $('workNote').textContent = note; $('bar').style.width = Math.round(amount * 100) + '%'; }
+  $('send').addEventListener('click', function () {
+    var name = $('name').value.trim() || 'My photo', c = crop(), prepared;
+    $('workTitle').textContent = 'Preparing your photo';
+    show('work'); progress('Framing your photo', .04);
+    api('POST', '/api/sessions/' + code + '/state', { state: 'receiving' }).catch(function () {});
+    setTimeout(function () {
+      CleanFramePrep.prepare(source, c, function (note, amount) { progress(note, amount * .7); }).then(function (out) {
+        prepared = out;
+        return Promise.all(CleanFramePrep.KINDS.map(function (k) { return dataURL(out.files[k]); }));
+      }).then(function (urls) {
+        var files = {};
+        CleanFramePrep.KINDS.forEach(function (k, i) { files[k] = urls[i]; });
+        $('workTitle').textContent = 'Sending to your TV';
+        progress('Sending', .72);
+        return api('POST', '/api/sessions/' + code + '/upload', { name: name, meta: prepared.meta, files: files }, function (p) { progress('Sending', .72 + p * .28); });
+      }).then(function () { show('done'); }, function (e) { fail(e.message || 'Something went wrong while preparing the photo.'); });
+    }, 50);
+  });
+  $('retry').addEventListener('click', function () { show(source ? 'crop' : 'start'); if (source) requestAnimationFrame(function () { fit(); place(); }); });
+})();
+</script>
+</body>
+</html>

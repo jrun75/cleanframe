@@ -338,7 +338,7 @@
       if (!app(id) && id.indexOf('.') > 0) APPS.push({ id: id, appId: id, name: id.split('.').pop(), mark: false });
       if (app(id)) h.push(id);
     });
-    if (!h.length) h = PRIMARY.slice();
+    if (!h.length) h = ['appletv'];
     (Array.isArray(s.recent) ? s.recent : []).forEach(function (id) { if (safeId(id) && app(id) && h.indexOf(id) < 0 && recent.indexOf(id) < 0 && recent.length < 5) recent.push(id); });
     return {
       bg: pick(modern.bg, LOOK_VALUES.bg, legacyList ? 'dark' : 'photo'), layout: pick(modern.layout, LOOK_VALUES.layout, legacyList ? 'list' : 'dock'),
@@ -526,7 +526,7 @@
     push({ id: 'wallpaper', i: i, top: clamp(i - 2, 0, Math.max(0, WALLS.length - WALL_VISIBLE)), f: { zone: 'photo' },
       previewTimer: 0, previewDue: null, applyPending: null, failedId: null, failedApply: false, retryBundle: null });
   }
-  function isSettingsDetail(t) { return t.id === 'appearance' || t.id === 'wallpaper'; }
+  function isSettingsDetail(t) { return t.id === 'appearance' || t.id === 'wallpaper' || t.id === 'upload'; }
 
   var V = {};
 
@@ -640,6 +640,17 @@
     if (bundle && apply) applyWallpaper(t, bundle);
     else previewWallpaper(t, t.i, apply, true);
   }
+  /* Uploaded photos can be removed, except the one in use. */
+  function canRemoveWallpaper(t) { var w = WALLS[t.i]; return !!(w && w.custom && w.id !== S.c.wall && !t.failedId && window.CleanFrameUploads); }
+  function removeWallpaper(t) {
+    var w = WALLS[t.i];
+    if (!canRemoveWallpaper(t)) return;
+    window.CleanFrameUploads.remove(w);
+    WALLS.splice(t.i, 1);
+    if (t.added === w.id) t.added = null;
+    t.f.zone = 'photo';
+    previewWallpaper(t, clamp(t.i, 0, WALLS.length - 1), false, true);
+  }
   function closeWallpaper(t) {
     cancelWallpaperTimer(t); t.applyPending = null; S.err = null; pop(); restoreLook();
     if (top().id === 'appearance' && top().group === 'background') detailFocus(top(), { action: 'background.wallpaper' }, 0);
@@ -648,6 +659,7 @@
     norm: function (t) {
       t.i = clamp(t.i, 0, WALLS.length - 1);
       if (t.f.zone === 'retry' && !t.failedId) t.f.zone = 'photo';
+      if (t.f.zone === 'remove' && !canRemoveWallpaper(t)) t.f.zone = 'photo';
       if (t.i < t.top) t.top = t.i;
       if (t.i >= t.top + WALL_VISIBLE) t.top = t.i - WALL_VISIBLE + 1;
       t.top = clamp(t.top, 0, Math.max(0, WALLS.length - WALL_VISIBLE));
@@ -664,21 +676,203 @@
         else if (k === 'up' || k === 'left') t.f.zone = 'photo';
         return;
       }
+      if (t.f.zone === 'remove') {
+        if (k === 'ok') removeWallpaper(t);
+        else if (k === 'up' || k === 'left') t.f.zone = 'photo';
+        return;
+      }
       if (k === 'left' || k === 'up' && t.i === 0) { t.f.zone = 'back'; t.applyPending = null; }
       else if (k === 'up' && t.i > 0) previewWallpaper(t, t.i - 1, false);
       else if (k === 'down' && t.i < WALLS.length - 1) previewWallpaper(t, t.i + 1, false);
       else if ((k === 'right' || k === 'down') && t.failedId) t.f.zone = 'retry';
+      else if (k === 'right' && canRemoveWallpaper(t)) t.f.zone = 'remove';
       else if (k === 'ok') { if (t.retryBundle) applyWallpaper(t, t.retryBundle); else applyWallpaper(t); }
     },
     point: function (t, z, i) {
       if (z === 'wall-back') closeWallpaper(t);
       else if (z === 'wall-retry') retryWallpaper(t);
+      else if (z === 'wall-remove' && canRemoveWallpaper(t)) removeWallpaper(t);
       else if (z === 'wall-choice' && i >= 0 && i < WALLS.length) {
         if (i === t.i) { t.f.zone = 'photo'; this.key(t, 'ok'); }
         else previewWallpaper(t, i, true);
       }
     }
   };
+
+  /* ---------- Upload child: QR code handoff to the relay on the Mac ---------- */
+  var UP = window.CleanFrameUploads || null, UP_POLL = 1500;
+  var UP_COPY = {
+    starting: ['Getting a code', ''],
+    waiting: ['Scan with your iPhone camera', 'The page opens in Safari.'],
+    connected: ['Phone connected', 'Choose a photo and frame it.'],
+    receiving: ['Getting your photo ready', 'This takes a few seconds.'],
+    saving: ['Saving to your TV', ''],
+    processing: ['Preparing your photo', ''],
+    offline: ['Can’t reach your Mac', 'Start the CleanFrame relay on your Mac, then try again.'],
+    unset: ['Uploads aren’t set up yet', 'Add your Mac’s relay address to this TV build to send photos from your iPhone.'],
+    expired: ['This code expired', 'Get a new code to keep going.'],
+    error: ['Something went wrong', '']
+  };
+  function openUpload() {
+    var t = push({ id: 'upload', f: { zone: 'back', i: 0 }, phase: 'starting', code: null, url: null, qr: '', timer: 0, token: 0, progress: 0, note: '' });
+    beginUpload(t);
+  }
+  function uploadActions(t) {
+    var a = [], busy = t.phase === 'saving' || t.phase === 'processing' || t.phase === 'receiving' || t.phase === 'starting';
+    if (t.phase === 'offline' || t.phase === 'error') a.push(['upload.retry', 'Try again']);
+    if (t.phase === 'expired') a.push(['upload.retry', 'Get a new code']);
+    if (UP && UP.canPickFile && !busy) a.push(['upload.file', 'Choose a file on this computer']);
+    return a;
+  }
+  function uploadPhase(t, phase, note) {
+    t.phase = phase; t.note = note || '';
+    var actions = uploadActions(t);
+    if (actions.length && (phase === 'offline' || phase === 'unset' || phase === 'expired' || phase === 'error')) { t.f.zone = 'act'; t.f.i = 0; }
+    else if (!actions.length) t.f.zone = 'back';
+  }
+  function uploadRefresh(t) { if (top() === t) { norm(); render(); } }
+  function beginUpload(t) {
+    var token = ++t.token;
+    clearTimeout(t.timer); t.code = null; t.url = null; t.qr = '';
+    if (!UP) { uploadPhase(t, 'error', 'This build is missing the upload module.'); return; }
+    uploadPhase(t, 'starting');
+    UP.startSession().then(function (s) {
+      if (token !== t.token) return;
+      t.code = s.code; t.url = s.url; t.qr = qrSvg(s.url);
+      uploadPhase(t, 'waiting'); uploadRefresh(t); pollUpload(t, token);
+    }, function (e) {
+      if (token !== t.token) return;
+      uploadPhase(t, e.unset ? 'unset' : 'offline'); uploadRefresh(t);
+    });
+  }
+  function pollUpload(t, token) {
+    t.timer = setTimeout(function () {
+      if (token !== t.token || top() !== t) return;
+      UP.poll(t.code).then(function (r) {
+        if (token !== t.token) return;
+        if (r.state === 'ready' && r.wallpaper) { saveUpload(t, token, r.wallpaper); return; }
+        if (r.state === 'expired') { uploadPhase(t, 'expired'); uploadRefresh(t); return; }
+        if (r.state !== t.phase && UP_COPY[r.state]) { uploadPhase(t, r.state); uploadRefresh(t); }
+        pollUpload(t, token);
+      }, function (e) {
+        if (token !== t.token) return;
+        if (e.status === 404) { uploadPhase(t, 'expired'); uploadRefresh(t); return; }
+        pollUpload(t, token);
+      });
+    }, UP_POLL);
+  }
+  function saveUpload(t, token, info) {
+    uploadPhase(t, 'saving'); t.progress = 0; uploadRefresh(t);
+    UP.download(info, function (p) { if (token === t.token) { t.progress = p; uploadRefresh(t); } }).then(function (w) {
+      if (token === t.token) uploadAdded(t, w);
+    }, function () {
+      if (token !== t.token) return;
+      uploadPhase(t, 'error', 'The photo arrived but couldn’t be saved on the TV.'); uploadRefresh(t);
+    });
+  }
+  var uploadInput = null;
+  function pickUploadFile(t) {
+    if (!uploadInput) {
+      uploadInput = document.createElement('input');
+      uploadInput.type = 'file'; uploadInput.accept = 'image/*'; uploadInput.style.display = 'none';
+      document.body.appendChild(uploadInput);
+    }
+    uploadInput.onchange = function () {
+      var file = uploadInput.files && uploadInput.files[0], token = ++t.token;
+      uploadInput.value = '';
+      if (!file || top() !== t) return;
+      clearTimeout(t.timer);
+      uploadPhase(t, 'processing'); t.progress = 0; uploadRefresh(t);
+      setTimeout(function () {
+        UP.fromFile(file, function (note, p) { if (token === t.token) { t.note = note; t.progress = p; uploadRefresh(t); } }).then(function (w) {
+          if (token === t.token) uploadAdded(t, w);
+        }, function (e) {
+          if (token !== t.token) return;
+          uploadPhase(t, 'error', e && e.message ? e.message : 'That photo couldn’t be prepared.'); uploadRefresh(t);
+        });
+      }, 30);
+    };
+    uploadInput.click();
+  }
+  /* A new photo lands at the top of the wallpaper list, previewed and ready for OK. */
+  function uploadAdded(t, w) {
+    var picker;
+    t.token++; clearTimeout(t.timer);
+    WALLS.unshift(w);
+    if (top() !== t) { render(); return; }
+    pop();
+    openWallpaper(); picker = top();
+    picker.i = 0; picker.top = 0; picker.added = w.id;
+    previewWallpaper(picker, 0, false, true);
+    norm(); render(); syncRotation();
+  }
+  function closeUpload(t) {
+    t.token++; clearTimeout(t.timer); pop();
+    if (top().id === 'appearance' && top().group === 'background') detailFocus(top(), { action: 'background.upload' }, 0);
+  }
+  function runUploadAction(t, action) {
+    if (action === 'upload.retry') beginUpload(t);
+    else if (action === 'upload.file') pickUploadFile(t);
+  }
+  V.upload = {
+    norm: function (t) {
+      var n = uploadActions(t).length;
+      if (t.f.zone === 'act' && !n) t.f.zone = 'back';
+      t.f.i = clamp(t.f.i, 0, Math.max(0, n - 1));
+    },
+    key: function (t, k) {
+      var actions = uploadActions(t);
+      if (k === 'back') { closeUpload(t); return; }
+      if (t.f.zone === 'back') {
+        if (k === 'ok') closeUpload(t);
+        else if ((k === 'down' || k === 'right') && actions.length) { t.f.zone = 'act'; t.f.i = 0; }
+        return;
+      }
+      if (k === 'up') { if (t.f.i > 0) t.f.i--; else t.f.zone = 'back'; }
+      else if (k === 'left') t.f.zone = 'back';
+      else if (k === 'down' && t.f.i < actions.length - 1) t.f.i++;
+      else if (k === 'ok' && actions[t.f.i]) runUploadAction(t, actions[t.f.i][0]);
+    },
+    point: function (t, z, i) {
+      var actions = uploadActions(t);
+      if (z === 'upload-back') closeUpload(t);
+      else if (z === 'upload-act' && actions[i]) { t.f.zone = 'act'; t.f.i = i; runUploadAction(t, actions[i][0]); }
+    }
+  };
+  function qrSvg(text) {
+    if (typeof window.qrcode !== 'function') return '';
+    var q = window.qrcode(0, 'M'), n, r, c, d = '', pad = 2;
+    q.addData(text); q.make(); n = q.getModuleCount();
+    for (r = 0; r < n; r++) for (c = 0; c < n; c++) if (q.isDark(r, c)) d += 'M' + (c + pad) + ' ' + (r + pad) + 'h1v1h-1z';
+    return '<svg class="upload-qr" viewBox="0 0 ' + (n + pad * 2) + ' ' + (n + pad * 2) + '" shape-rendering="crispEdges" role="img" aria-label="QR code for the upload page"><rect width="100%" height="100%" fill="#fffbf4"/><path d="' + d + '" fill="#1d1a16"/></svg>';
+  }
+  function renderUpload(t) {
+    var copy = t.phase === 'unset' && UP && UP.canPickFile ? ['No Mac relay in this preview', 'Run the relay on your Mac to scan with your iPhone. For now, choose a photo on this computer.'] : UP_COPY[t.phase] || UP_COPY.error, actions = uploadActions(t), showCode = !!t.qr && ['waiting', 'connected', 'receiving', 'saving'].indexOf(t.phase) >= 0;
+    var busy = t.phase === 'saving' || t.phase === 'processing', step = { waiting: 1, connected: 2, receiving: 3, saving: 3, processing: 3 }[t.phase] || 0, hint;
+    V.upload.norm(t);
+    appearanceEl.className = 'appearance detail-upload';
+    appearanceRows.className = 'appearance-rows upload-rows';
+    appearanceTitle.textContent = 'Upload a photo';
+    setHTML(appearanceBack, '<button type="button" tabindex="-1" class="setting-choice setting-back' + (t.f.zone === 'back' ? ' is-focus' : '') + '" data-z="upload-back" data-i="0" data-action="upload.back">' + icon('left') + '<span>Background</span></button>');
+    setHTML(appearanceRows, '<ol class="upload-steps">'
+      + [['Scan the code', 'Use the Camera app on your iPhone.'], ['Choose a photo', 'Drag and pinch to frame it for the TV.'], ['Send it', 'It appears first in your wallpapers.']].map(function (s, i) {
+        return '<li class="upload-step' + (step === i + 1 ? ' is-current' : step > i + 1 ? ' is-done' : '') + '"><span class="upload-step-n">' + (step > i + 1 ? icon('check') : i + 1) + '</span><span class="setting-copy"><span class="setting-name">' + esc(s[0]) + '</span><span class="setting-description">' + esc(s[1]) + '</span></span></li>';
+      }).join('') + '</ol>'
+      + (actions.length ? '<div class="upload-actions">' + actions.map(function (a, i) {
+        return '<button type="button" tabindex="-1" class="setting-choice' + (t.f.zone === 'act' && t.f.i === i ? ' is-focus' : '') + '" data-z="upload-act" data-i="' + i + '" data-action="' + a[0] + '"><span class="setting-copy"><span class="setting-name">' + esc(a[1]) + '</span></span>' + icon('right', 'setting-forward') + '</button>';
+      }).join('') + '</div>' : ''));
+    setHTML(appearanceStatus, '');
+    setHTML(uploadCard, '<div class="upload-card' + (showCode ? ' has-code' : ' is-message') + '">'
+      + (showCode ? '<div class="upload-qr-wrap">' + t.qr + '</div>' : '')
+      + '<div class="upload-copy">'
+      + '<p class="upload-title">' + esc(copy[0]) + '</p>'
+      + '<p class="upload-body">' + esc(t.note && !busy ? t.note : copy[1]) + '</p>'
+      + (busy ? '<div class="upload-bar"><i style="width:' + Math.round(t.progress * 100) + '%"></i></div><p class="upload-body">' + esc(t.phase === 'processing' ? t.note || 'Working' : Math.round(t.progress * 100) + '%') + '</p>' : '')
+      + (showCode ? '<p class="upload-code" aria-label="Code ' + esc(t.code.split('').join(' ')) + '">' + esc(t.code.slice(0, 3) + ' ' + t.code.slice(3)) + '</p><p class="upload-url">' + esc(String(t.url).replace(/^https?:\/\//, '')) + '</p>' : '')
+      + '</div></div>');
+    hint = t.f.zone === 'back' ? (actions.length ? 'Return to Background' : 'Cancel and return to Background') : actions[t.f.i] ? (actions[t.f.i][0] === 'upload.file' ? 'Pick a photo on this computer' : 'Try again') : '';
+    setHTML(appearanceDesc, hint ? '<span class="remote-key">OK</span><span>' + esc(hint) + '</span>' : '');
+  }
 
   /* ---------- Installed apps ---------- */
   function appsItems() { return catalog.error ? [] : ALPHA; }
@@ -851,7 +1045,8 @@
     function options(axis, values, disabled) { return values.map(function (value) { return choice(axis, value, disabled); }); }
     if (t.group === 'background') return [
       { id: 'bg', title: 'Background type', items: options('bg', ['photo', 'light', 'dark']) },
-      { id: 'wall', title: 'Wallpaper', items: [{ action: 'background.wallpaper', label: wall(S.c.wall).name, thumbnail: true, disabled: flat }] },
+      { id: 'wall', title: 'Wallpaper', items: [{ action: 'background.wallpaper', label: wall(S.c.wall).name, thumbnail: true, disabled: flat },
+        { action: 'background.upload', label: 'Upload a photo', upload: true, disabled: flat }] },
       { id: 'rotation', title: 'Rotation', items: [{ action: 'background.rotation', label: mode().name, disabled: flat }], reason: flat ? 'Choose Photo to use wallpaper and rotation.' : '' }
     ];
     if (t.group === 'layout') return [
@@ -913,6 +1108,7 @@
     } else if (item.axis === 'mode') applyRotation(item.value);
     else if (item.axis) { patch[item.axis] = item.value; setLook(patch, { row: item.axis }); }
     else if (item.action === 'background.wallpaper') openWallpaper();
+    else if (item.action === 'background.upload') openUpload();
     else if (item.action === 'background.rotation') openAppearance('rotation');
     else if (item.action === 'samsung.home') perform('Samsung Home', FrameDevice.home);
     else if (item.action === 'samsung.settings') perform('TV settings', FrameDevice.settings);
@@ -980,7 +1176,7 @@
   var dock = $('dock'), shelf = $('shelf'), track = $('track'), plate = $('plate'), matScrim = $('matScrim'), dockEmpty = $('dockEmpty');
   var cueL = $('cueL'), cueR = $('cueR'), dockAction = $('dockAction');
   var focusStatus = $('focusStatus'), sceneEl = $('scene'), appearanceEl = $('appearance'), appearanceRows = $('appearanceRows'), appearanceDesc = $('appearanceDesc');
-  var appearanceBack = $('appearanceBack'), appearanceTitle = $('appearanceTitle'), appearanceStatus = $('appearanceStatus');
+  var appearanceBack = $('appearanceBack'), appearanceTitle = $('appearanceTitle'), appearanceStatus = $('appearanceStatus'), uploadCard = $('uploadCard');
   var phScene = $('phScene'), phPlate = $('phPlate'), phField = $('phField'), phList = $('phList'), phRows = $('phRows'), phAction = $('phAction'), phEmpty = $('phEmpty');
   var phPlates = [phPlate, $('phPlateAlt')], phFields = [phField, $('phFieldAlt')], photoPlateIndex = 0, photoPlateKey = null;
   var utPlates = [$('utLens'), $('utLensAlt')], utFields = [$('utField'), $('utFieldAlt')], utPlateIndex = 0, utPlateKey = null;
@@ -1059,13 +1255,15 @@
     var d = new Date(), h = d.getHours() % 12 || 12, m = d.getMinutes();
     return h + ':' + (m < 10 ? '0' : '') + m;
   }
+  var DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'], MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  function dateText() { var d = new Date(); return DAYS[d.getDay()] + ', ' + MONTHS[d.getMonth()] + ' ' + d.getDate(); }
   function clockHtml() {
     var text = clockText(), metrics = fontMetrics[homeFont()];
     if (!metrics || !metrics.digitCell) return text;
     return text.replace(/[0-9]/g, function (digit) { return '<span class="clock-digit">' + digit + '</span>'; });
   }
   function renderCaption(t, hs) {
-    var html = '<span class="clock">' + clockHtml() + '</span>';
+    var html = '<span class="clock">' + clockHtml() + '</span><span class="clock-date">' + dateText() + '</span>';
     if (S.c.apps !== 'icons' && hs.items[hs.i] && (S.c.layout === 'list' ? photoLabel(hs.items[hs.i].id, false).size < 88 || photoLabel(hs.items[hs.i].id, false).ellipsis : hs.zone === 'apps' && reducedDockLabel(hs.items[hs.i].id))) html += '<span class="cap-line full-name">' + esc(app(hs.items[hs.i].id).name) + '</span>';
     setHTML(caption, html);
   }
@@ -1379,6 +1577,8 @@
     appearanceEl.hidden = !isSettingsDetail(t);
     if (appearanceEl.hidden) { appearanceEl.removeAttribute('aria-modal'); return; }
     appearanceEl.setAttribute('aria-modal', 'true');
+    uploadCard.hidden = t.id !== 'upload';
+    if (t.id === 'upload') { renderUpload(t); return; }
     if (t.id === 'wallpaper') { renderWallpaper(t); return; }
     V.appearance.norm(t);
     appearanceEl.className = 'appearance detail-' + t.group;
@@ -1400,9 +1600,10 @@
         + '<div class="setting-options"' + (section.items[0].axis ? ' role="radiogroup" aria-label="' + esc(section.title || LOOK_NAMES[section.id] || DETAIL_NAMES[t.group]) + '"' : '') + '>'
         + section.items.map(function (item) {
           var swatch = item.axis === 'bg', body = '';
+          if (item.upload) body += '<span class="setting-swatch swatch-upload" aria-hidden="true">' + icon('plus') + '</span>';
           if (swatch || item.thumbnail) body += item.value === 'light' || item.value === 'dark'
             ? '<span class="setting-swatch swatch-' + item.value + '" aria-hidden="true"></span>'
-            : '<img class="setting-swatch" src="' + WP + S.c.wall + '-thumb.jpg" alt="">';
+            : '<img class="setting-swatch" src="' + wpImg(S.c.wall, 'thumb') + '" alt="">';
           body += '<span class="setting-copy"><span class="setting-name">' + esc(item.label) + '</span>'
             + (item.description ? '<span class="setting-description">' + esc(item.description) + '</span>' : '') + '</span>';
           if (!item.axis) body += icon('right', 'setting-forward');
@@ -1416,7 +1617,7 @@
         + command({ action: 'settings.retry', label: 'Try again' }, '<span>Try again</span>', 'setting-retry');
     }
     setHTML(appearanceStatus, status);
-    hint = selected.disabled ? '' : selected.action === 'settings.back' ? 'Return to ' + (t.group === 'rotation' ? 'Background' : 'Settings') : selected.action === 'settings.retry' ? 'Retry this change' : selected.axis ? 'Apply selected setting' : selected.action === 'background.wallpaper' ? 'Choose a wallpaper' : selected.action === 'background.rotation' ? 'Choose a rotation interval' : 'Open on the TV';
+    hint = selected.disabled ? '' : selected.action === 'settings.back' ? 'Return to ' + (t.group === 'rotation' ? 'Background' : 'Settings') : selected.action === 'settings.retry' ? 'Retry this change' : selected.axis ? 'Apply selected setting' : selected.action === 'background.wallpaper' ? 'Choose a wallpaper' : selected.action === 'background.upload' ? 'Send a photo from your iPhone' : selected.action === 'background.rotation' ? 'Choose a rotation interval' : 'Open on the TV';
     setHTML(appearanceDesc, hint ? '<span class="remote-key">OK</span><span>' + esc(hint) + '</span>' : '');
   }
   function renderWallpaper(t) {
@@ -1429,7 +1630,7 @@
     var rows = appearanceRows.querySelector('.wallpaper-rows'), shown = wall(S.wallShown) || wall(S.c.wall), candidate = WALLS[t.i], status, note, hint;
     keyed(rows, WALLS.map(function (w) { return { key: w.id, wall: w }; }), function (row, item, i) {
       var visible = i >= t.top && i < t.top + WALL_VISIBLE, w = item.wall, image;
-      setContent(row, w.id + '|' + visible, '<span class="wallpaper-thumb">' + (visible ? '<img src="' + WP + w.id + '-thumb.jpg" alt="">' : '') + '</span><span class="setting-copy"><span class="setting-name">' + esc(w.name) + '</span></span><span class="setting-tick" aria-hidden="true"></span>');
+      setContent(row, w.id + '|' + visible, '<span class="wallpaper-thumb">' + (visible ? '<img src="' + wpImg(w.id, 'thumb') + '" alt="">' : '') + '</span><span class="setting-copy"><span class="setting-name">' + esc(w.name) + '</span></span><span class="setting-tick" aria-hidden="true"></span>');
       row.className = 'setting-choice wallpaper-choice' + (t.f.zone === 'photo' && t.i === i ? ' is-focus' : '') + (w.id === S.c.wall ? ' is-applied' : '');
       row.style.transform = 'translate3d(0,' + (i * WALL_ROW) + 'px,0)'; row.style.visibility = visible ? 'visible' : 'hidden';
       row.setAttribute('role', 'radio'); row.setAttribute('tabindex', '-1'); row.setAttribute('aria-label', w.name);
@@ -1447,12 +1648,14 @@
     rows.style.transform = 'translate3d(0,' + (-t.top * WALL_ROW) + 'px,0)';
     appearanceRows.querySelector('.wallpaper-before').className = 'wallpaper-edge wallpaper-before' + (t.top > 0 ? ' is-on' : '');
     appearanceRows.querySelector('.wallpaper-after').className = 'wallpaper-edge wallpaper-after' + (t.top + WALL_VISIBLE < WALLS.length ? ' is-on' : '');
-    note = t.previewDue ? 'Preparing ' + candidate.name + '…' : S.wallPending ? (t.applyPending ? 'Applying ' : 'Loading ') + candidate.name + '…' : shown.id === S.c.wall ? 'Applied' : 'Preview';
+    note = t.previewDue ? 'Preparing ' + candidate.name + '…' : S.wallPending ? (t.applyPending ? 'Applying ' : 'Loading ') + candidate.name + '…' : shown.id === S.c.wall ? 'Applied' : shown.id === t.added ? 'Just added. Press OK to use it.' : 'Preview';
     if (t.failedId) note = S.err ? 'Couldn’t save ' + wall(t.failedId).name + '.' : 'Couldn’t load ' + wall(t.failedId).name + '.';
     status = '<p class="wallpaper-preview-name"><span>' + esc(shown.name) + '</span><span class="wallpaper-count">' + (wallIndex(shown.id) + 1) + ' of ' + WALLS.length + '</span></p><p class="wallpaper-preview-state' + (t.failedId ? ' setting-error' : '') + '">' + esc(note) + '</p>';
     if (t.failedId) status += '<button type="button" tabindex="-1" class="setting-choice setting-retry' + (t.f.zone === 'retry' ? ' is-focus' : '') + '" data-z="wall-retry" data-action="wallpaper.retry">Try again</button>';
+    else if (canRemoveWallpaper(t)) status += '<button type="button" tabindex="-1" class="setting-choice setting-retry setting-remove' + (t.f.zone === 'remove' ? ' is-focus' : '') + '" data-z="wall-remove" data-i="0" data-action="wallpaper.remove">Remove photo</button>';
+    else if (candidate.custom && candidate.id === S.c.wall) status += '<p class="wallpaper-preview-state">Your photo. To remove it, apply another wallpaper first.</p>';
     setHTML(appearanceStatus, status);
-    hint = t.f.zone === 'back' ? 'Return to Background' : t.f.zone === 'retry' ? 'Retry this photo' : 'Apply selected photo';
+    hint = t.f.zone === 'back' ? 'Return to Background' : t.f.zone === 'retry' ? 'Retry this photo' : t.f.zone === 'remove' ? 'Remove this photo from the TV' : 'Apply selected photo';
     if (t.f.zone === 'photo' && candidate.id === S.c.wall && !S.pending && !t.failedId) hint = '';
     setHTML(appearanceDesc, hint ? '<span class="remote-key">OK</span><span>' + hint + '</span>' : '');
   }
@@ -1618,8 +1821,16 @@
   /* ---------- Atomic appearance bundles ---------- */
   var wallToken = 0, committedBundle = null, reflowToken = 0, fontSwitchToken = 0;
   function registeredMaterial(id) { return S.c.bg === 'photo' && S.c.material === 'soft' && !!wall(id); }
-  function matSrc(id, material) { return 'assets/materials/' + id + (material === 'soft' ? '-study-soft.jpg' : material === 'tint' ? '-field-clear.jpg' : '-field-frost.jpg'); }
-  function fieldSrc(id, material) { return 'assets/materials/' + id + (material === 'soft' ? '-field-blur.jpg' : material === 'tint' ? '-field-clear.jpg' : '-field-frost.jpg'); }
+  /* Every wallpaper image comes through here, so uploaded photos can use their stored copies. */
+  function wpImg(id, kind) {
+    var w = wall(id);
+    if (w && w.custom) return w.urls[kind];
+    if (kind === 'photo') return WP + id + '.jpg';
+    if (kind === 'thumb' || kind === 'panel') return WP + id + '-' + kind + '.jpg';
+    return 'assets/materials/' + id + '-' + kind + '.jpg';
+  }
+  function matSrc(id, material) { return wpImg(id, material === 'soft' ? 'study-soft' : material === 'tint' ? 'field-clear' : 'field-frost'); }
+  function fieldSrc(id, material) { return wpImg(id, material === 'soft' ? 'field-blur' : material === 'tint' ? 'field-clear' : 'field-frost'); }
   function makeImg(cls, src) { var im = document.createElement('img'); im.className = cls; im.alt = ''; im._src = src; im.src = src; return im; }
   function whenReady(im, done) {
     var fin = false, timer = setTimeout(function () { finish(false); }, 8000);
@@ -1631,7 +1842,7 @@
   function swapImg(k, im) { var old = IMG[k]; if (old === im) return; im.style.cssText = old.style.cssText; if (old.id) im.id = old.id; old.parentNode.replaceChild(im, old); IMG[k] = im; }
   function bundleKey(look) { return look.wall + '|' + look.material; }
   function loadBundle(look, token, done) {
-    var imgs = { photo: makeImg('photo', WP + look.wall + '.jpg'), bg: makeImg('sheet-bg', WP + look.wall + '-panel.jpg') }, keys, left, allOk = true;
+    var imgs = { photo: makeImg('photo', wpImg(look.wall, 'photo')), bg: makeImg('sheet-bg', wpImg(look.wall, 'panel')) }, keys, left, allOk = true;
     imgs.mat = makeImg('mat-img', matSrc(look.wall, look.material));
     imgs.field = makeImg('ph-field-img', fieldSrc(look.wall, look.material));
     imgs.fieldAlt = makeImg('ph-field-img', fieldSrc(look.wall, look.material));
@@ -1828,6 +2039,7 @@
   var heldKeys = {};
   document.addEventListener('keydown', function (ev) {
     var code = ev.keyCode, k = KEYS[code];
+    if (!S.stack) return;
     if (code === 9) { ev.preventDefault(); return; }
     if (!k || ev.metaKey || ev.ctrlKey || ev.altKey) return;
     ev.preventDefault();
@@ -1876,7 +2088,12 @@
 
   /* ---------- Start ---------- */
   cueL.innerHTML = icon('left'); cueR.innerHTML = icon('right');
-  initialise();
-  setLook({}, { transient: true, startup: true });
-  norm(); render(); fit(); focusStage(); updateClock(); syncRotation();
+  function start() {
+    initialise();
+    setLook({}, { transient: true, startup: true });
+    norm(); render(); fit(); focusStage(); updateClock(); syncRotation();
+  }
+  // Uploaded photos live in on-device storage; add them before restoring the saved wallpaper.
+  if (window.CleanFrameUploads) window.CleanFrameUploads.load(function (list) { for (var i = list.length - 1; i >= 0; i--) WALLS.unshift(list[i]); start(); });
+  else start();
 })();
