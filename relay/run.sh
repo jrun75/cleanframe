@@ -22,7 +22,7 @@ if [ "${1:-}" = "--which-node" ]; then echo "$NODE"; exit 0; fi
 [ -x "$NODE" ] || { echo "$(date): Node.js not found" >&2; exit 1; }
 
 # Use the same address the TV build was given, so the QR code always matches it.
-HOST_IP="$(sed -n "s#.*http://\([0-9.]*\):.*#\1#p" "$DIR/../app/assets/relay.js" | head -n 1)"
+HOST_IP="$(grep "^window.CleanFrameRelay" "$DIR/../app/assets/relay.js" | sed -n "s|.*http://\([0-9.]*\):.*|\1|p")"
 [ -n "$HOST_IP" ] && export CLEANFRAME_HOST="$HOST_IP"
 
 echo "$(date): starting relay with $NODE (address ${HOST_IP:-auto})"
