@@ -47,6 +47,34 @@
       api().launchAppControl(control, 'org.tizen.art-app', function () { finish(null); }, function (err) { finish(failure(err)); });
     } catch (err) { finish(failure(err)); }
   }
+  /* Show an HDMI input on the TV's main picture, then step CleanFrame aside so the
+     source plays natively. Falls back to the given app if the TV refuses. */
+  var HDMI_PORT = { appletv: 1 };
+  function hdmi(port, fallbackId, done) {
+    var finish = bounded(done);
+    function fallback(why) {
+      if (window.console) console.log('[CleanFrame] HDMI switch failed: ' + why);
+      if (fallbackId && api()) { try { api().launch(fallbackId, function () { finish(null); }, function (err) { finish(failure(err)); }); return; } catch (e) {} }
+      finish({ message: 'The TV could not switch to HDMI ' + port + '.', detail: why });
+    }
+    if (!window.tizen || !tizen.tvwindow || !tizen.systeminfo) { if (!api()) { unavailable(finish); return; } fallback('No TV window support'); return; }
+    try {
+      tizen.systeminfo.getPropertyValue('VIDEOSOURCE', function (info) {
+        var list = ((info && info.connected) || []).concat((info && info.disconnected) || []), src = null, i;
+        for (i = 0; i < list.length; i++) if (list[i].type === 'HDMI' && Number(list[i].number) === port) { src = list[i]; break; }
+        if (!src) { fallback('HDMI ' + port + ' not found'); return; }
+        try {
+          tizen.tvwindow.setSource(src, function () {
+            try { tizen.tvwindow.show(function () {
+              finish(null);
+              setTimeout(function () { try { tizen.application.getCurrentApplication().hide(); } catch (e) {} }, 300);
+            }, function (err) { fallback('show: ' + (err && err.message)); }, ['0px', '0px', '1920px', '1080px'], 'MAIN'); }
+            catch (e) { fallback('show: ' + e.message); }
+          }, function (err) { fallback('setSource: ' + (err && err.message)); }, 'MAIN');
+        } catch (e) { fallback('setSource: ' + e.message); }
+      }, function (err) { fallback('VIDEOSOURCE: ' + (err && err.message)); });
+    } catch (e) { fallback(e.message); }
+  }
   function home(done) { launchApp('com.samsung.tv.csfs', done); }
   function settings(done) { launchApp('com.samsung.tv.coba.setting', done); }
   function apps(done) {
@@ -70,5 +98,5 @@
       }, function (err) { finish(failure(err)); });
     } catch (err) { finish(failure(err)); }
   }
-  window.FrameDevice = { launch: launch, launchApp: launchApp, art: art, home: home, settings: settings, apps: apps };
+  window.FrameDevice = { launch: launch, launchApp: launchApp, hdmi: hdmi, HDMI_PORT: HDMI_PORT, art: art, home: home, settings: settings, apps: apps };
 }());
