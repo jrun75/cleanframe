@@ -505,7 +505,7 @@
   }
 
   /* ---------- Navigation targets ---------- */
-  function utils() { return ['apps', 'settings']; }
+  function utils() { return ['settings']; }
   /* prev/next run along the apps; out goes to the controls, inn comes back (or to a per-app action). */
   function axes() {
     var v = S.c.layout === 'list';
