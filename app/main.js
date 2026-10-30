@@ -447,11 +447,20 @@
   function message(title, line, note) {
     push({ id: 'message', msg: 'error', content: { title: title, line: line, note: note || '', actions: [['back', 'Back']] }, f: { b: 0 } });
   }
+  /* While an HDMI source is shown, CleanFrame stays in front but invisible. Back returns. */
+  function startPassthrough() { S.passthrough = true; document.documentElement.className += ' is-passthrough'; }
+  function endPassthrough() {
+    if (!S.passthrough) return;
+    S.passthrough = false; FrameDevice.endPassthrough();
+    document.documentElement.className = document.documentElement.className.replace(/\s*is-passthrough/g, '');
+    after(); updateClock(); focusStage();
+  }
   function perform(title, run) {
     if (busy) return;
     busy = true; busyTimer = setTimeout(release, 10000);
-    run(function (err) {
+    run(function (err, result) {
       release();
+      if (!err && result && result.passthrough) startPassthrough();
       if (err) message(title, err.message || 'The TV could not open this screen.', err.detail || '');
       render(); syncRotation();
     });
@@ -2041,6 +2050,7 @@
   document.addEventListener('keydown', function (ev) {
     var code = ev.keyCode, k = KEYS[code];
     if (!S.stack) return;
+    if (S.passthrough) { if (k === 'back') { ev.preventDefault(); if (!heldKeys[code]) { heldKeys[code] = true; endPassthrough(); } } return; }
     if (code === 9) { ev.preventDefault(); return; }
     if (!k || ev.metaKey || ev.ctrlKey || ev.altKey) return;
     ev.preventDefault();
@@ -2053,7 +2063,7 @@
   document.addEventListener('visibilitychange', function () {
     heldKeys = {};
     if (document.hidden) { pauseRotation(); clearTimeout(clockTimer); }
-    else { release(); after(); updateClock(); focusStage(); }
+    else { if (S.passthrough) endPassthrough(); release(); after(); updateClock(); focusStage(); }
   });
   window.addEventListener('resize', fit);
 

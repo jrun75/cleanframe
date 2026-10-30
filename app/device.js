@@ -65,16 +65,16 @@
         if (!src) { fallback('HDMI ' + port + ' not found'); return; }
         try {
           tizen.tvwindow.setSource(src, function () {
-            try { tizen.tvwindow.show(function () {
-              finish(null);
-              setTimeout(function () { try { tizen.application.getCurrentApplication().hide(); } catch (e) {} }, 300);
-            }, function (err) { fallback('show: ' + (err && err.message)); }, ['0px', '0px', '1920px', '1080px'], 'MAIN'); }
+            // Stay in front with a see-through page, so there is no flash of Samsung's home screen.
+            try { tizen.tvwindow.show(function () { finish(null, { passthrough: true }); },
+              function (err) { fallback('show: ' + (err && err.message)); }, ['0px', '0px', '1920px', '1080px'], 'MAIN'); }
             catch (e) { fallback('show: ' + e.message); }
           }, function (err) { fallback('setSource: ' + (err && err.message)); }, 'MAIN');
         } catch (e) { fallback('setSource: ' + e.message); }
       }, function (err) { fallback('VIDEOSOURCE: ' + (err && err.message)); });
     } catch (e) { fallback(e.message); }
   }
+  function endPassthrough() { try { if (window.tizen && tizen.tvwindow) tizen.tvwindow.hide(function () {}, function () {}, 'MAIN'); } catch (e) {} }
   function home(done) { launchApp('com.samsung.tv.csfs', done); }
   function settings(done) { launchApp('com.samsung.tv.coba.setting', done); }
   function apps(done) {
@@ -98,5 +98,5 @@
       }, function (err) { finish(failure(err)); });
     } catch (err) { finish(failure(err)); }
   }
-  window.FrameDevice = { launch: launch, launchApp: launchApp, hdmi: hdmi, HDMI_PORT: HDMI_PORT, art: art, home: home, settings: settings, apps: apps };
+  window.FrameDevice = { launch: launch, launchApp: launchApp, hdmi: hdmi, HDMI_PORT: HDMI_PORT, endPassthrough: endPassthrough, art: art, home: home, settings: settings, apps: apps };
 }());

@@ -637,3 +637,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000}
 .bg-photo.has-adaptive-ink.l-dock .caption .clock-date{color:var(--tl-clock-ink)}
 .bg-photo.has-adaptive-ink.l-list.tr-dark .caption .clock-date{text-shadow:var(--tr-shadow)}
 .bg-photo.has-adaptive-ink.l-dock.adaptive-tl-dark .caption .clock-date{text-shadow:var(--tl-shadow)}
+
+/* HDMI passthrough: the TV picture shows through a transparent page. */
+html.is-passthrough,html.is-passthrough body{background:transparent!important}
+html.is-passthrough .stage{visibility:hidden}
