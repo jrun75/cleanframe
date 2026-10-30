@@ -2063,7 +2063,7 @@
   document.addEventListener('visibilitychange', function () {
     heldKeys = {};
     if (document.hidden) { pauseRotation(); clearTimeout(clockTimer); }
-    else { if (S.passthrough) endPassthrough(); release(); after(); updateClock(); focusStage(); }
+    else { if (S.passthrough) endPassthrough(); else FrameDevice.endPassthrough(); release(); after(); updateClock(); focusStage(); }
   });
   window.addEventListener('resize', fit);
 
@@ -2100,6 +2100,7 @@
   /* ---------- Start ---------- */
   cueL.innerHTML = icon('left'); cueR.innerHTML = icon('right');
   function start() {
+    if (window.FrameDevice && FrameDevice.endPassthrough) FrameDevice.endPassthrough(); // clear any HDMI picture left from a previous run
     initialise();
     setLook({}, { transient: true, startup: true });
     norm(); render(); fit(); focusStage(); updateClock(); syncRotation();
