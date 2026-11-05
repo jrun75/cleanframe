@@ -49,7 +49,7 @@
   }
   /* Show an HDMI input on the TV's main picture, then step CleanFrame aside so the
      source plays natively. Falls back to the given app if the TV refuses. */
-  var HDMI_PORT = { appletv: 1 };
+  var HDMI_PORT = { appletv: 1, play: 2 };
   function hdmi(port, fallbackId, done) {
     var finish = bounded(done);
     function fallback(why) {

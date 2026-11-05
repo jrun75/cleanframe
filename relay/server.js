@@ -130,6 +130,21 @@ async function api(req, res, parts) {
       return json(res, 200, { ok: true, id });
     }
   }
+  // GET /api/wallpapers: every photo saved on this Mac, newest first (used by Restore photos)
+  if (parts.length === 1 && parts[0] === 'wallpapers' && req.method === 'GET') {
+    const list = [];
+    for (const id of fs.readdirSync(DATA)) {
+      if (!/^u[a-z0-9]+$/.test(id)) continue;
+      try { if (KINDS.every(k => fs.existsSync(path.join(DATA, id, k + '.jpg')))) list.push(wallpaperInfo(id)); } catch (e) {}
+    }
+    list.sort((x, y) => (x.created < y.created ? 1 : -1));
+    return json(res, 200, { wallpapers: list });
+  }
+  // DELETE /api/wallpapers/:id: the TV removed this photo, so Restore shouldn't bring it back
+  if (parts[0] === 'wallpapers' && parts.length === 2 && req.method === 'DELETE' && /^u[a-z0-9]+$/.test(parts[1])) {
+    fs.rmSync(path.join(DATA, parts[1]), { recursive: true, force: true });
+    return json(res, 200, { ok: true });
+  }
   // GET /api/wallpapers/:id/:kind.jpg
   if (parts[0] === 'wallpapers' && parts.length === 3 && req.method === 'GET' && /^u[a-z0-9]+$/.test(parts[1])) {
     return file(res, path.join(DATA, parts[1]), parts[2]);

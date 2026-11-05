@@ -18,8 +18,9 @@
     { id: 'netflix', name: 'Netflix', mark: true, appId: 'org.tizen.netflix-app' },
     { id: 'disneyplus', name: 'Disney+', mark: true, appId: 'MCmYXNxgcu.DisneyPlus' },
     { id: 'youtube', name: 'YouTube', mark: true, appId: '9Ur5IzDKqV.TizenYouTube' },
-    { id: 'appletv', name: 'Apple TV', mark: true, appId: 'com.samsung.tv.aria-video' },
-    { id: 'artmode', name: 'Art Mode', mark: true, brand: 'art', appId: 'org.tizen.art-app' },
+    { id: 'appletv', name: 'Watch', mark: true, appId: 'com.samsung.tv.aria-video' },
+    { id: 'artmode', name: 'Art', mark: true, brand: 'art', appId: 'org.tizen.art-app' },
+    { id: 'play', name: 'Play', mark: true, brand: 'play', appId: 'cleanframe.hdmi2' },
     { id: 'primevideo', name: 'Prime Video', mark: true, appId: 'org.tizen.primevideo' },
     { id: 'abciview', name: 'ABC iview', mark: true, appId: 'mWK87Xghap.ABCiview' },
     { id: 'sbs', name: 'SBS On Demand', mark: true, appId: 'OyE7OuxlUi.SBSOnDemand' },
@@ -62,6 +63,7 @@
     undo: '<path d="M9 6 5 10l4 4"/><path d="M5 10h9.5a4.5 4.5 0 0 1 0 9H11"/>',
     check: '<path d="m5.5 12.5 4 4 9-9"/>',
     plus: '<path d="M12 5v14M5 12h14"/>',
+    refresh: '<path d="M20 11a8 8 0 0 0-14.6-4.5M4 4v3.5h3.5M4 13a8 8 0 0 0 14.6 4.5M20 20v-3.5h-3.5"/>',
     left: '<path d="m14.5 5-7 7 7 7"/>',
     right: '<path d="m9.5 5 7 7-7 7"/>',
     up: '<path d="m5 15.5 7-7 7 7"/>',
@@ -339,9 +341,12 @@
       if (!app(id) && id.indexOf('.') > 0) APPS.push({ id: id, appId: id, name: id.split('.').pop(), mark: false });
       if (app(id)) h.push(id);
     });
-    if (!h.length) h = ['appletv', 'artmode'];
-    // Art Mode moved from the corner controls to Home; add it once for existing setups.
-    else if (!s.artTile && h.indexOf('artmode') < 0 && h.length < CAP) h.splice(h.indexOf('appletv') + 1, 0, 'artmode');
+    if (!h.length) h = ['appletv', 'artmode', 'play'];
+    else {
+      // New Home tiles are added once for existing setups.
+      if (!s.artTile && h.indexOf('artmode') < 0 && h.length < CAP) h.splice(h.indexOf('appletv') + 1, 0, 'artmode');
+      if (!s.playTile && h.indexOf('play') < 0 && h.length < CAP) h.splice(Math.max(h.indexOf('artmode'), h.indexOf('appletv')) + 1, 0, 'play');
+    }
     (Array.isArray(s.recent) ? s.recent : []).forEach(function (id) { if (safeId(id) && app(id) && h.indexOf(id) < 0 && recent.indexOf(id) < 0 && recent.length < 5) recent.push(id); });
     return {
       bg: pick(modern.bg, LOOK_VALUES.bg, legacyList ? 'dark' : 'photo'), layout: pick(modern.layout, LOOK_VALUES.layout, legacyList ? 'list' : 'dock'),
@@ -355,7 +360,7 @@
   function serialise(c) {
     var out = {}, id;
     Object.keys(c).forEach(function (key) { out[key] = c[key]; });
-    out.version = 2; out.artTile = true; out.look = lookOf(c); out.dock = c.home.slice(); out.wallpaper = c.wall;
+    out.version = 2; out.artTile = true; out.playTile = true; out.look = lookOf(c); out.dock = c.home.slice(); out.wallpaper = c.wall;
     out.theme = c.layout === 'list' ? 'list' : 'shore';
     out.appRecords = [];
     c.home.concat(c.recent).forEach(function (key) {
@@ -474,7 +479,7 @@
     if (S.c.home.indexOf(id) >= 0) { c = next(S.c.home.slice(), S.c.recent.slice()); c.lastApp = id; write(c, 'Last app'); }
     S.press = id; S.lastLaunch = a.name;
     if (id === 'artmode') perform(a.name, FrameDevice.art);
-    else if (FrameDevice.HDMI_PORT && FrameDevice.HDMI_PORT[id]) perform(a.name, function (done) { FrameDevice.hdmi(FrameDevice.HDMI_PORT[id], a.appId, done); });
+    else if (FrameDevice.HDMI_PORT && FrameDevice.HDMI_PORT[id]) perform(a.name, function (done) { FrameDevice.hdmi(FrameDevice.HDMI_PORT[id], id === 'play' ? null : a.appId, done); });
     else perform(a.name, function (done) { FrameDevice.launchApp(a.appId, done); });
   }
   function refreshCatalog() {
@@ -722,26 +727,61 @@
     receiving: ['Getting your photo ready', 'This takes a few seconds.'],
     saving: ['Saving to your TV', ''],
     processing: ['Preparing your photo', ''],
+    restoring: ['Restoring your photos', ''],
+    uptodate: ['All your photos are here', 'Every photo saved on your Mac is already on this TV.'],
     offline: ['Can’t reach your Mac', 'Start the CleanFrame relay on your Mac, then try again.'],
     unset: ['Uploads aren’t set up yet', 'Add your Mac’s relay address to this TV build to send photos from your iPhone.'],
     expired: ['This code expired', 'Get a new code to keep going.'],
     error: ['Something went wrong', '']
   };
+  /* Restore photos: download every photo the Mac keeps that this TV is missing. */
+  function restorePhotos(progress) {
+    var have = [];
+    WALLS.forEach(function (w) { if (w.custom && w.serverId) have.push(w.serverId); });
+    return UP.restore(have, progress || function () {}).then(function (added) {
+      var custom = WALLS.filter(function (w) { return w.custom; }).concat(added), rest = WALLS.filter(function (w) { return !w.custom; });
+      custom.sort(function (a, b) { return a.created < b.created ? 1 : -1; });
+      WALLS.length = 0; custom.concat(rest).forEach(function (w) { WALLS.push(w); });
+      return added;
+    });
+  }
+  function restoreFromUpload(t) {
+    var token = ++t.token;
+    clearTimeout(t.timer);
+    uploadPhase(t, 'restoring'); t.progress = 0; t.note = 'Checking your Mac'; uploadRefresh(t);
+    restorePhotos(function (done, total) {
+      if (token !== t.token) return;
+      t.progress = total ? done / total : 0; t.note = total ? 'Photo ' + Math.min(done + 1, total) + ' of ' + total : 'Checking your Mac'; uploadRefresh(t);
+    }).then(function (added) {
+      var picker;
+      if (token !== t.token) return;
+      if (!added.length) { uploadPhase(t, 'uptodate'); uploadRefresh(t); return; }
+      if (top() !== t) { render(); return; }
+      t.token++; pop(); openWallpaper(); picker = top();
+      picker.i = 0; picker.top = 0; picker.restored = added.length;
+      previewWallpaper(picker, 0, false, true); norm(); render(); syncRotation();
+    }, function (e) {
+      if (token !== t.token) return;
+      uploadPhase(t, e && e.offline ? 'offline' : 'error', e && e.offline ? '' : 'Restore didn’t finish. Try again.'); uploadRefresh(t);
+    });
+  }
   function openUpload() {
     var t = push({ id: 'upload', f: { zone: 'back', i: 0 }, phase: 'starting', code: null, url: null, qr: '', timer: 0, token: 0, progress: 0, note: '' });
     beginUpload(t);
   }
   function uploadActions(t) {
-    var a = [], busy = t.phase === 'saving' || t.phase === 'processing' || t.phase === 'receiving' || t.phase === 'starting';
+    var a = [], busy = t.phase === 'saving' || t.phase === 'processing' || t.phase === 'receiving' || t.phase === 'starting' || t.phase === 'restoring';
     if (t.phase === 'offline' || t.phase === 'error') a.push(['upload.retry', 'Try again']);
     if (t.phase === 'expired') a.push(['upload.retry', 'Get a new code']);
+    if (t.phase === 'uptodate') a.push(['upload.retry', 'Upload a photo']);
+    if (UP && UP.relay && !busy && t.phase !== 'uptodate') a.push(['upload.restore', 'Restore photos from your Mac']);
     if (UP && UP.canPickFile && !busy) a.push(['upload.file', 'Choose a file on this computer']);
     return a;
   }
   function uploadPhase(t, phase, note) {
     t.phase = phase; t.note = note || '';
     var actions = uploadActions(t);
-    if (actions.length && (phase === 'offline' || phase === 'unset' || phase === 'expired' || phase === 'error')) { t.f.zone = 'act'; t.f.i = 0; }
+    if (actions.length && (phase === 'offline' || phase === 'unset' || phase === 'expired' || phase === 'error' || phase === 'uptodate')) { t.f.zone = 'act'; t.f.i = 0; }
     else if (!actions.length) t.f.zone = 'back';
   }
   function uploadRefresh(t) { if (top() === t) { norm(); render(); } }
@@ -827,6 +867,7 @@
   function runUploadAction(t, action) {
     if (action === 'upload.retry') beginUpload(t);
     else if (action === 'upload.file') pickUploadFile(t);
+    else if (action === 'upload.restore') restoreFromUpload(t);
   }
   V.upload = {
     norm: function (t) {
@@ -862,11 +903,11 @@
   }
   function renderUpload(t) {
     var copy = t.phase === 'unset' && UP && UP.canPickFile ? ['No Mac relay in this preview', 'Run the relay on your Mac to scan with your iPhone. For now, choose a photo on this computer.'] : UP_COPY[t.phase] || UP_COPY.error, actions = uploadActions(t), showCode = !!t.qr && ['waiting', 'connected', 'receiving', 'saving'].indexOf(t.phase) >= 0;
-    var busy = t.phase === 'saving' || t.phase === 'processing', step = { waiting: 1, connected: 2, receiving: 3, saving: 3, processing: 3 }[t.phase] || 0, hint;
+    var busy = t.phase === 'saving' || t.phase === 'processing' || t.phase === 'restoring', step = { waiting: 1, connected: 2, receiving: 3, saving: 3, processing: 3 }[t.phase] || 0, hint;
     V.upload.norm(t);
     appearanceEl.className = 'appearance detail-upload';
     appearanceRows.className = 'appearance-rows upload-rows';
-    appearanceTitle.textContent = 'Upload a photo';
+    appearanceTitle.textContent = 'Your photos';
     setHTML(appearanceBack, '<button type="button" tabindex="-1" class="setting-choice setting-back' + (t.f.zone === 'back' ? ' is-focus' : '') + '" data-z="upload-back" data-i="0" data-action="upload.back">' + icon('left') + '<span>Background</span></button>');
     setHTML(appearanceRows, '<ol class="upload-steps">'
       + [['Scan the code', 'Use the Camera app on your iPhone.'], ['Choose a photo', 'Drag and pinch to frame it for the TV.'], ['Send it', 'It appears first in your wallpapers.']].map(function (s, i) {
@@ -881,10 +922,10 @@
       + '<div class="upload-copy">'
       + '<p class="upload-title">' + esc(copy[0]) + '</p>'
       + '<p class="upload-body">' + esc(t.note && !busy ? t.note : copy[1]) + '</p>'
-      + (busy ? '<div class="upload-bar"><i style="width:' + Math.round(t.progress * 100) + '%"></i></div><p class="upload-body">' + esc(t.phase === 'processing' ? t.note || 'Working' : Math.round(t.progress * 100) + '%') + '</p>' : '')
+      + (busy ? '<div class="upload-bar"><i style="width:' + Math.round(t.progress * 100) + '%"></i></div><p class="upload-body">' + esc(t.phase === 'processing' || t.phase === 'restoring' ? t.note || 'Working' : Math.round(t.progress * 100) + '%') + '</p>' : '')
       + (showCode ? '<p class="upload-code" aria-label="Code ' + esc(t.code.split('').join(' ')) + '">' + esc(t.code.slice(0, 3) + ' ' + t.code.slice(3)) + '</p><p class="upload-url">' + esc(String(t.url).replace(/^https?:\/\//, '')) + '</p>' : '')
       + '</div></div>');
-    hint = t.f.zone === 'back' ? (actions.length ? 'Return to Background' : 'Cancel and return to Background') : actions[t.f.i] ? (actions[t.f.i][0] === 'upload.file' ? 'Pick a photo on this computer' : 'Try again') : '';
+    hint = t.f.zone === 'back' ? (actions.length ? 'Return to Background' : 'Cancel and return to Background') : actions[t.f.i] ? (actions[t.f.i][0] === 'upload.file' ? 'Pick a photo on this computer' : actions[t.f.i][0] === 'upload.restore' ? 'Bring back every photo saved on your Mac' : actions[t.f.i][1]) : '';
     setHTML(appearanceDesc, hint ? '<span class="remote-key">OK</span><span>' + esc(hint) + '</span>' : '');
   }
 
@@ -1060,7 +1101,7 @@
     if (t.group === 'background') return [
       { id: 'bg', title: 'Background type', items: options('bg', ['photo', 'light', 'dark']) },
       { id: 'wall', title: 'Wallpaper', items: [{ action: 'background.wallpaper', label: wall(S.c.wall).name, thumbnail: true, disabled: flat },
-        { action: 'background.upload', label: 'Upload a photo', upload: true, disabled: flat }] },
+        { action: 'background.upload', label: 'Upload or restore photos', upload: true, disabled: flat }] },
       { id: 'rotation', title: 'Rotation', items: [{ action: 'background.rotation', label: mode().name, disabled: flat }], reason: flat ? 'Choose Photo to use wallpaper and rotation.' : '' }
     ];
     if (t.group === 'layout') return [
@@ -1632,7 +1673,7 @@
         + command({ action: 'settings.retry', label: 'Try again' }, '<span>Try again</span>', 'setting-retry');
     }
     setHTML(appearanceStatus, status);
-    hint = selected.disabled ? '' : selected.action === 'settings.back' ? 'Return to ' + (t.group === 'rotation' ? 'Background' : 'Settings') : selected.action === 'settings.retry' ? 'Retry this change' : selected.axis ? 'Apply selected setting' : selected.action === 'background.wallpaper' ? 'Choose a wallpaper' : selected.action === 'background.upload' ? 'Send a photo from your iPhone' : selected.action === 'background.rotation' ? 'Choose a rotation interval' : 'Open on the TV';
+    hint = selected.disabled ? '' : selected.action === 'settings.back' ? 'Return to ' + (t.group === 'rotation' ? 'Background' : 'Settings') : selected.action === 'settings.retry' ? 'Retry this change' : selected.axis ? 'Apply selected setting' : selected.action === 'background.wallpaper' ? 'Choose a wallpaper' : selected.action === 'background.upload' ? 'Send a photo from your iPhone, or bring yours back' : selected.action === 'background.rotation' ? 'Choose a rotation interval' : 'Open on the TV';
     setHTML(appearanceDesc, hint ? '<span class="remote-key">OK</span><span>' + esc(hint) + '</span>' : '');
   }
   function renderWallpaper(t) {
@@ -1663,7 +1704,7 @@
     rows.style.transform = 'translate3d(0,' + (-t.top * WALL_ROW) + 'px,0)';
     appearanceRows.querySelector('.wallpaper-before').className = 'wallpaper-edge wallpaper-before' + (t.top > 0 ? ' is-on' : '');
     appearanceRows.querySelector('.wallpaper-after').className = 'wallpaper-edge wallpaper-after' + (t.top + WALL_VISIBLE < WALLS.length ? ' is-on' : '');
-    note = t.previewDue ? 'Preparing ' + candidate.name + '…' : S.wallPending ? (t.applyPending ? 'Applying ' : 'Loading ') + candidate.name + '…' : shown.id === S.c.wall ? 'Applied' : shown.id === t.added ? 'Just added. Press OK to use it.' : 'Preview';
+    note = t.previewDue ? 'Preparing ' + candidate.name + '…' : S.wallPending ? (t.applyPending ? 'Applying ' : 'Loading ') + candidate.name + '…' : shown.id === S.c.wall ? 'Applied' : shown.id === t.added ? 'Just added. Press OK to use it.' : t.restored && t.i === 0 && shown.id === WALLS[0].id ? 'Restored ' + t.restored + (t.restored === 1 ? ' photo' : ' photos') + '. Press OK to use this one.' : 'Preview';
     if (t.failedId) note = S.err ? 'Couldn’t save ' + wall(t.failedId).name + '.' : 'Couldn’t load ' + wall(t.failedId).name + '.';
     status = '<p class="wallpaper-preview-name"><span>' + esc(shown.name) + '</span><span class="wallpaper-count">' + (wallIndex(shown.id) + 1) + ' of ' + WALLS.length + '</span></p><p class="wallpaper-preview-state' + (t.failedId ? ' setting-error' : '') + '">' + esc(note) + '</p>';
     if (t.failedId) status += '<button type="button" tabindex="-1" class="setting-choice setting-retry' + (t.f.zone === 'retry' ? ' is-focus' : '') + '" data-z="wall-retry" data-action="wallpaper.retry">Try again</button>';
@@ -2111,6 +2152,10 @@
     norm(); render(); fit(); focusStage(); updateClock(); syncRotation();
   }
   // Uploaded photos live in on-device storage; add them before restoring the saved wallpaper.
-  if (window.CleanFrameUploads) window.CleanFrameUploads.load(function (list) { for (var i = list.length - 1; i >= 0; i--) WALLS.unshift(list[i]); start(); });
+  function autoRestore() {
+    if (!UP || !UP.relay || WALLS.some(function (w) { return w.custom; })) return;
+    restorePhotos().then(function (added) { if (added.length) render(); }, function () {});
+  }
+  if (window.CleanFrameUploads) window.CleanFrameUploads.load(function (list) { for (var i = list.length - 1; i >= 0; i--) WALLS.unshift(list[i]); start(); setTimeout(autoRestore, 3000); });
   else start();
 })();

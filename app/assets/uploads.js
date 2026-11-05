@@ -35,7 +35,7 @@
     var m = record.meta || {}, urls = {};
     KINDS.forEach(function (k) { urls[k] = URL.createObjectURL(record.blobs[k]); });
     return {
-      id: record.id, name: record.name, custom: true, created: record.created, urls: urls,
+      id: record.id, serverId: record.serverId || null, name: record.name, custom: true, created: record.created, urls: urls,
       tone: m.tone === 'light' ? 'light' : 'dark',
       ut: { tr: m.ut && m.ut.tr === 'mist' ? 'mist' : 'light', br: m.ut && m.ut.br === 'mist' ? 'mist' : 'light' },
       frostVeil: m.frostVeil === .2 ? .2 : .12, listColumn: 0, dockQuiet: false, clockMist: !!m.clockMist
@@ -53,13 +53,15 @@
     setTimeout(function () { finish([]); }, 2500);
     tx('readonly', function (s) { return s.getAll(); }).then(function (r) { finish(r || []); }, function () { finish(memory.slice()); });
   }
-  function save(name, meta, blobs) {
-    var record = { id: 'u' + Date.now().toString(36), name: String(name || 'My photo').slice(0, 40), meta: meta || {}, created: new Date().toISOString(), blobs: blobs };
+  var seq = 0;
+  function save(name, meta, blobs, serverId, created) {
+    var record = { id: 'u' + Date.now().toString(36) + (seq++).toString(36), serverId: serverId || null, name: String(name || 'My photo').slice(0, 40), meta: meta || {}, created: created || new Date().toISOString(), blobs: blobs };
     return tx('readwrite', function (s) { s.put(record); }).then(function () { return toWall(record); }, function () { memory.push(record); return toWall(record); });
   }
   function remove(w) {
     memory = memory.filter(function (r) { return r.id !== w.id; });
     setTimeout(function () { release(w); }, 5000);
+    if (relay && w.serverId) request('DELETE', relay + '/api/wallpapers/' + w.serverId, null, 6000).catch(function () {});
     return tx('readwrite', function (s) { s.delete(w.id); });
   }
 
@@ -89,7 +91,20 @@
       var k = KINDS[i];
       return request('GET', relay + info.files[k], 'blob', 30000).then(function (b) { blobs[k] = b; i++; progress(i / KINDS.length); return next(); });
     }
-    return next().then(function () { return save(info.name, info.meta, blobs); });
+    return next().then(function () { return save(info.name, info.meta, blobs, info.id, info.created); });
+  }
+  /* Bring back every photo saved on the Mac that this TV doesn't already have. */
+  function restore(have, progress) {
+    if (!relay) { var e = new Error('No relay'); e.offline = true; return Promise.reject(e); }
+    return request('GET', relay + '/api/wallpapers', null, 8000).then(function (r) {
+      var list = (r.wallpapers || []).filter(function (w) { return have.indexOf(w.id) < 0; }), added = [], i = 0;
+      progress(0, list.length);
+      function next() {
+        if (i >= list.length) return Promise.resolve(added);
+        return download(list[i], function () {}).then(function (w) { added.push(w); i++; progress(i, list.length); return next(); });
+      }
+      return next();
+    });
   }
 
   /* ---------- Browser preview: pick a file on this computer ---------- */
@@ -107,7 +122,7 @@
   }
 
   window.CleanFrameUploads = {
-    load: load, remove: remove, startSession: startSession, poll: poll, download: download, fromFile: fromFile,
+    load: load, remove: remove, restore: restore, startSession: startSession, poll: poll, download: download, fromFile: fromFile,
     relay: relay, canPickFile: !window.tizen && !!window.CleanFramePrep
   };
 })();
