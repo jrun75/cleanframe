@@ -29,6 +29,8 @@ step "2/4  Building and signing"
 rm -rf build && cp -R app build
 "$TIZEN" package -t wgt -s "$PROFILE" -- build | tail -n 2
 [ -f build/CleanFrame.wgt ] || fail "Packaging failed. Check the certificate profile \"$PROFILE\" in Tizen Studio's Certificate Manager."
+# Keep a copy of the signed build so the watchdog can reinstall it if the TV ever drops the app.
+mkdir -p "$HOME/Library/Application Support/CleanFrame" && cp build/CleanFrame.wgt "$HOME/Library/Application Support/CleanFrame/CleanFrame.wgt"
 
 step "3/4  Installing on the TV"
 OUT="$("$TIZEN" install -n CleanFrame.wgt -t "$TARGET" -- build 2>&1)" || true
