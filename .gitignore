@@ -27,3 +27,9 @@ PP*.woff2
 /explorations/
 /docs/research/
 /docs/articles/
+
+# Local only
+build/
+relay/data/
+tv-apps.txt
+*.wgt
