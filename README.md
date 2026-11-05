@@ -1,10 +1,15 @@
 # CleanFrame
 
-A quieter home screen for Samsung The Frame Pro.
+A quieter, personalized home screen for Samsung The Frame Pro.
 
 ![CleanFrame browser preview using the bundled Manrope font](docs/images/cleanframe-dock.jpg)
 
-I built CleanFrame for one TV: my own Samsung The Frame Pro, running Tizen 10. I'm sharing the code and setup notes as a starting point for other people to build on.
+I built CleanFrame for the Samsung The Frame Pro, running Tizen 10 built off of Nathan's excellent work.
+
+## Key features
+- Anyone in the home can scan a QR code to add their own photo
+- Added photos are saved locally and can be deleted any time
+- Minimal UI that works with any app or device connected via HDMI
 
 **Use it at your own risk.** Most of the work has gone into making it work well on my TV. Very little has gone into making it portable. The setup scripts reflect my computer, TV and firmware, so expect to adapt them and test the result on your own hardware.
 
