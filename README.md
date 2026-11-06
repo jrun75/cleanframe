@@ -1,6 +1,6 @@
 # CleanFrame
 
-A quieter, personalized home screen for Samsung The Frame Pro.
+A quieter, personalized home screen for Samsung The Frame Pro based on Nathan's Clean Frame (github.com/nthnclrk/CleanFrame).
 
 ![CleanFrame browser preview using the bundled Manrope font](docs/images/cleanframe-dock.jpg)
 
